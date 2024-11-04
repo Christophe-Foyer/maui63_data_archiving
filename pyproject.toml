@@ -1,0 +1,75 @@
+[build-system]
+# A list of packages that are needed to build your package:
+requires = ["setuptools"]  # REQUIRED if [build-system] table is used
+# The name of the Python object that frontends will use to perform the build:
+build-backend = "setuptools.build_meta"  # If not defined, then legacy behavior can happen.
+
+[project]
+name = "maui63_data_archiving"
+
+# Versions should comply with PEP 440:
+# https://www.python.org/dev/peps/pep-0440/
+#
+# For a discussion on single-sourcing the version, see
+# https://packaging.python.org/guides/single-sourcing-package-version/
+version = "0.0.1"  # REQUIRED, although can be dynamic
+
+# https://packaging.python.org/specifications/core-metadata/#summary
+description = "A better way to store image sequences"
+
+# This field corresponds to the "Description" metadata field:
+# https://packaging.python.org/specifications/core-metadata/#description-optional
+readme = "README.md"
+
+# https://packaging.python.org/guides/distributing-packages-using-setuptools/#python-requires
+requires-python = ">=3.8"
+
+# https://packaging.python.org/en/latest/specifications/core-metadata/#license
+license = {file = "LICENSE.txt"}
+
+keywords = ["compression", "lossless", "image", "video"]
+authors = [
+  {name = "Christophe Foyer", email = "christophe@cfoyer.com" }
+]
+maintainers = [
+  {name = "Christophe Foyer", email = "christophe@cfoyer.com" }
+]
+
+# For a list of valid classifiers, see https://pypi.org/classifiers/
+classifiers = [
+  # How mature is this project? Common values are
+  #   3 - Alpha
+  #   4 - Beta
+  #   5 - Production/Stable
+  "Development Status :: 3 - Alpha",
+
+  # Indicate who your project is intended for
+  "Intended Audience :: Developers",
+  "Topic :: Software Development :: Build Tools",
+
+  # Pick your license as you wish
+  "License :: OSI Approved :: MIT License",
+
+  # Specify the Python versions you support here. In particular, ensure
+  # that you indicate you support Python 3. These classifiers are *not*
+  # checked by "pip install". See instead "requires-python" key in this file.
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3 :: Only",
+]
+
+# This field lists other packages that your project depends on to run.
+# Any package you put here will be installed by pip when your project is
+# installed, so they must be valid existing projects.
+dependencies = [
+  "imageio[ffmpeg]",
+  "scikit-image",
+  "tqdm",
+]
+
+[tool.setuptools]
+packages = ["maui63_data_archiving"]
