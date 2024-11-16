@@ -35,9 +35,9 @@ def images_to_lossless_h265(
         format="FFMPEG",
         mode="I",
         fps=1,
-        codec="libx264rgb",
-        output_params=["-crf", "0", "-preset", preset],
-        pixelformat="bgr24",
+        codec="libx265",
+        output_params=["-preset", preset, '-x265-params', 'lossless=1'],
+        pixelformat="gbrp",
     )
 
     # Write the frames to the file
@@ -67,9 +67,10 @@ if __name__ == "__main__":
     import imageio.v2 as iio2
     import skimage.io
 
-    dir = "tmp/imagedir"
+    # dir = "tmp/imagedir"
+    dir = os.path.expanduser("~/Downloads/maui63_images")
     images = [os.path.join(dir, file) for file in os.listdir(dir)]
 
-    images_to_lossless_h265(images, "tmp/output.mkv")
+    images_to_lossless_h265(images, "tmp/output.mkv", preset='veryslow', check_frames=True)
 
 # %%

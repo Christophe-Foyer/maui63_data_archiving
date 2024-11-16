@@ -71,5 +71,12 @@ dependencies = [
   "tqdm",
 ]
 
+[project.optional-dependencies]
+test = [
+  "pytest",
+  # "pypng",
+  "matplotlib",
+]
+
 [tool.setuptools]
 packages = ["maui63_data_archiving"]
