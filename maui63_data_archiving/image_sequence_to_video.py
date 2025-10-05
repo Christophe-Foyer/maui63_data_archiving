@@ -68,7 +68,7 @@ if __name__ == "__main__":
     import skimage.io
 
     # dir = "tmp/imagedir"
-    dir = os.path.expanduser("~/Downloads/maui63_images")
+    dir = os.path.expanduser("./test_data/png")
     images = [os.path.join(dir, file) for file in os.listdir(dir)]
 
     images_to_lossless_h265(images, "tmp/output.mkv", preset='veryslow', check_frames=True)

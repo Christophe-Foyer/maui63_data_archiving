@@ -67,6 +67,7 @@ classifiers = [
 # installed, so they must be valid existing projects.
 dependencies = [
   "imageio[ffmpeg]",
+  "pillow-jxl-plugin",
   "scikit-image",
   "tqdm",
 ]
