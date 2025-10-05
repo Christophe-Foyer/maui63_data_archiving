@@ -6,10 +6,10 @@ from pathlib import Path
 from typing import List, Union
 
 import numpy as np
-from converters.h265 import H265Converter
-from converters.jxl import JPEGXLConverter
-from image_source.folder import FolderSource, ImageListSource
-from image_source.video import VideoSource
+from maui63_data_archiving.converters.h265 import H265Converter
+from maui63_data_archiving.converters.jxl import JPEGXLConverter
+from maui63_data_archiving.image_source.folder import FolderSource, ImageListSource
+from maui63_data_archiving.image_source.video import VideoSource
 from tqdm.auto import tqdm
 
 

@@ -4,6 +4,7 @@ from typing import List, Union
 import imageio.v3 as iio3
 import numpy as np
 import pillow_jxl
+_ = pillow_jxl # So stuff doesn't complain, I'm sure there's an ignore flag in vscode somewhere though
 
 from maui63_data_archiving.image_source.abstract import ImageSource
 

@@ -2,7 +2,8 @@ import subprocess
 from pathlib import Path
 from typing import Union
 
-import pillow_jxl as _
+import pillow_jxl
+_ = pillow_jxl # So stuff doesn't complain, I'm sure there's an ignore flag in vscode somewhere though
 from tqdm.autonotebook import tqdm
 
 from maui63_data_archiving.converters.abstract import Converter

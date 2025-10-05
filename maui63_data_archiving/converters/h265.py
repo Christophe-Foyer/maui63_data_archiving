@@ -59,7 +59,7 @@ class H265Converter(Converter):
         else: # It's an image source
             # Ensure output path has proper extension
             if not output_path.suffix:
-                output_path = output_path.with_suffix('.mp4')
+                raise ValueError("Please specify the extension (mp4/mkv).")
             
             # Setup writer
             writer = iio2.get_writer(
@@ -68,7 +68,8 @@ class H265Converter(Converter):
                 mode="I",
                 fps=fps,
                 codec="libx265",
-                output_params=["-preset", preset, "-x265-params", "lossless=1", "-pix_fmt", "gbrp"],
+                output_params=["-preset", preset, "-x265-params", "lossless=1"],
+                pixelformat="gbrp",
             )
             
             # Write frames directly from disk

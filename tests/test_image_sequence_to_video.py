@@ -11,8 +11,10 @@ import skimage.io
 from contextlib import contextmanager
 
 import numpy as np
+import pytest
 
-from maui63_data_archiving.image_sequence_to_video import images_to_lossless_h265
+from maui63_data_archiving.converter import convert_images
+
 
 matplotlib.use("Agg")
 
@@ -31,10 +33,15 @@ def make_image_dir(num_img=20):
         y = []
         for i in range(num_img):
             filename = f"{dir}/fig_{str(i).zfill(6)}.png"
-            x.append(i)
-            y.append(np.random.randint(255))
+
+            # Append a bunch of data points
+            for i in range(10):
+                x.append(i)
+                y.append(np.random.randint(255))
+
             plt.plot(x, y)
             plt.savefig(filename)
+            
             # TODO: This is very inefficient 
             skimage.io.imsave(
                 filename,
@@ -44,17 +51,23 @@ def make_image_dir(num_img=20):
         yield dir
 
 
-def test_images_to_lossless_h265():
-    with make_image_dir() as dir, tempfile.NamedTemporaryFile(suffix=".mkv") as f:
+@pytest.mark.parametrize("converter_type", ["h265", "jxl"])
+def test_images_to_lossless(converter_type):
+    with make_image_dir() as dir, tempfile.TemporaryDirectory() as f:
         images = [os.path.join(dir, file) for file in os.listdir(dir)]
 
-        images_to_lossless_h265(images, f.name, check_frames=True)
+        output_path = os.path.join(f, "output.mkv")
+
+        convert_images(images, output_path, converter_type=converter_type, check_frames=True)
 
 
-def test_images_to_lossless_h265_smaller():
-    with make_image_dir() as dir, tempfile.NamedTemporaryFile(suffix=".mkv") as f:
+@pytest.mark.parametrize("converter_type", ["h265", "jxl"])
+def test_images_to_lossless_smaller(converter_type):
+    with make_image_dir() as dir, tempfile.TemporaryDirectory() as f:
         images = [os.path.join(dir, file) for file in os.listdir(dir)]
 
-        images_to_lossless_h265(images, f.name, check_frames=False)
+        output_path = os.path.join(f, "output.mkv")
+        
+        convert_images(images, output_path, converter_type=converter_type, check_frames=False)
 
-        assert du(dir) > du(f.name)
+        assert du(dir) > du(f), f"Output was larger than the input ({du(dir)} vs {du(f)})"
