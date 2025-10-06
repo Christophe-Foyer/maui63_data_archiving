@@ -54,7 +54,7 @@ def make_image_dir(num_img=20):
 @pytest.mark.parametrize("converter_type", ["h265", "jxl"])
 def test_images_to_lossless(converter_type):
     with make_image_dir() as dir, tempfile.TemporaryDirectory() as f:
-        output_path = os.path.join(f, "output.mkv")
+        output_path = os.path.join(f, "output.mkv") # TODO: Make it so I don't have to specify an output format
 
         convert_images(dir, output_path, converter_type=converter_type, check_frames=True)
 
@@ -62,7 +62,7 @@ def test_images_to_lossless(converter_type):
 @pytest.mark.parametrize("converter_type", ["h265", "jxl"])
 def test_images_to_lossless_smaller(converter_type):
     with make_image_dir() as dir, tempfile.TemporaryDirectory() as f:
-        output_path = os.path.join(f, "output.mkv")
+        output_path = os.path.join(f, "output.mkv") # TODO: Make it so I don't have to specify an output format
         
         convert_images(dir, output_path, converter_type=converter_type, check_frames=False)
 
