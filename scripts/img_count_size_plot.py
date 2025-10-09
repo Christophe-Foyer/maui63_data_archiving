@@ -66,10 +66,10 @@ img_counts = []
 dirsize = []
 filesize_h265 = []
 filesize_jxl = []
-num_iter = 20
-iter_to_frame=lambda x: 1 + x*20
+num_iter = 10
+iter_to_frame=lambda x: 1 + x*10
 
-with make_image_dir(iter_to_frame(num_iter-1), number_of_points=200, new_points_per_iter=50) as dir:
+with make_image_dir(iter_to_frame(num_iter-1), number_of_points=5000, new_points_per_iter=2000) as dir:
     # Go down so we can delete extra files as we go
     for i in tqdm(reversed(range(0, num_iter)), desc="Main loop"):
         img_count = iter_to_frame(i)
@@ -80,7 +80,7 @@ with make_image_dir(iter_to_frame(num_iter-1), number_of_points=200, new_points_
             os.remove(os.path.join(dir, images[idx]))
 
         with tempfile.TemporaryDirectory() as f_h265, tempfile.TemporaryDirectory() as f_jxl:
-            convert_images(dir, os.path.join(f_h265, "output.mkv"), converter_type="h265")
+            convert_images(dir, os.path.join(f_h265, "output.mkv"), converter_type="h265", preset="veryslow")
             convert_images(dir, f_jxl, converter_type="jxl")
 
             img_counts.append(img_count)
@@ -113,18 +113,18 @@ img_size = []
 dirsize = []
 filesize_h265 = []
 filesize_jxl = []
-num_iter = 20
+num_iter = 10
 frame_count = 30
 iter_to_kwargs = lambda x: dict(
-    number_of_points=50*(i+1),
-    new_points_per_iter=20*(i+1),
-    size=np.array([50, 50]) * (i + 1),
+    number_of_points=500*(i+1),
+    new_points_per_iter=200*(i+1),
+    size=np.array([100, 100]) * (i + 1),
 )
 
 for i in tqdm(range(0, num_iter), desc="Main loop"):
     kwargs = iter_to_kwargs(i)
     with make_image_dir(frame_count, **kwargs) as dir, tempfile.TemporaryDirectory() as f_h265, tempfile.TemporaryDirectory() as f_jxl:
-        convert_images(dir, os.path.join(f_h265, "output.mkv"), converter_type="h265")
+        convert_images(dir, os.path.join(f_h265, "output.mkv"), converter_type="h265", preset="veryslow")
         convert_images(dir, f_jxl, converter_type="jxl")
 
         img_size.append(kwargs["size"][0])
