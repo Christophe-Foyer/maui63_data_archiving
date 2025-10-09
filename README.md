@@ -3,7 +3,7 @@
 
 _____
 
-A basic repository for data archiving scripts and APIs for Maui63.
+A basic repository for data archiving scripts and APIs for Maui63.  
 🚧 This repository is still early stages and is a work in progress 🚧
 
 ## Installation
@@ -33,4 +33,5 @@ convert_images(input_dir,"jxl_output_dir", converter_type="jxl", quality=100)
 
 - Transfer metadata
 - Store frame names for video outputs
+
 
