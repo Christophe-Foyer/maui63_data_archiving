@@ -1,14 +1,34 @@
 # Maui63 Data Archiving
-### - [Maui63](https://www.maui63.org/)
+### *[maui63.org](https://www.maui63.org/)*
+
+_____
 
 A basic repository for data archiving scripts and APIs for Maui63
 
-## Dependencies
+## Installation
 
-### image sequence -> video
+Clone the repository and install in your python environment using `pip install .`
 
-`sudo apt install ffmpeg`
+### System Dependencies
 
-### image -> jpeg-xl
+The library relies on ffmepg and libjxl tools: `sudo apt install ffmpeg libjxl-tools`
 
-`sudo apt install libjxl-tools`
+## Usage
+
+```
+from maui63_data_archiving.converter import convert_images
+
+input_dir = "path/to/images/"
+
+# Convert to H265
+convert_images(input_dir,"output.mkv", converter_type="h265", preset="veryslow")
+
+# Convert to JXL
+convert_images(input_dir,"jxl_output_dir", converter_type="jxl", quality=100)
+
+```
+
+## TODOs
+
+- Transfer metadata
+- Store frame names for video outputs
