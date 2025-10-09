@@ -79,5 +79,6 @@ test = [
   "matplotlib",
 ]
 
-[tool.setuptools]
-packages = ["maui63_data_archiving"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["maui63_data_archiving*"]
