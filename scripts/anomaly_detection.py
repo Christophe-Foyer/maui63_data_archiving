@@ -1,0 +1,51 @@
+# %%
+
+import os
+from torch.utils.data.dataset import ConcatDataset
+from maui63_data_archiving.dataset import VideoFrameDataset, VideoDataModule
+import albumentations as A
+import cv2
+
+# %%
+
+def get_concat_dataset(folder):
+    files = [os.path.join(folder, file) for file in os.listdir(folder)]
+
+    return ConcatDataset([
+        VideoFrameDataset(
+            file,
+            tile_size=1024,
+            transform=A.Compose(
+                [
+                    A.Resize(
+                        height=256,
+                        width=256,
+                        interpolation=cv2.INTER_LINEAR,
+                        mask_interpolation=cv2.INTER_NEAREST,
+                        p=1.0
+                    )
+                ],
+            )
+        ) for file in files
+    ])
+
+data = VideoDataModule(
+    train_dataset=get_concat_dataset("../test_data/train_videos"),
+    test_dataset=get_concat_dataset("../test_data/test_videos"),
+)
+
+# %%
+
+import matplotlib.pyplot as plt
+
+plt.imshow(data.test_dataset.datasets[1][0]["image"])
+plt.show()
+
+plt.imshow(data.test_dataset.datasets[1][1]["image"])
+plt.show()
+
+# %%
+
+# WIP
+
+# %%

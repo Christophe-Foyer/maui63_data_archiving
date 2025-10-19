@@ -3,6 +3,7 @@ import tempfile
 from pathlib import Path
 from typing import List, Union
 
+import imageio
 import imageio.v3 as iio3
 import numpy as np
 from PIL import Image
@@ -21,7 +22,10 @@ class VideoSource(ImageSource):
         self.tmp_dir = tempfile.TemporaryDirectory(prefix=os.path.basename(video_path))
         
     def __len__(self):
-        return iio3.get_frame_count(self.video_path)
+        # TODO: Cache this?
+        vid = imageio.get_reader(self.video_path, "ffmpeg")
+        num_frames = vid.count_frames()
+        return num_frames
     
     def get_image(self, idx) -> np.ndarray:
         return iio3.imread(self.video_path, index=idx)

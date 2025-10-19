@@ -78,6 +78,12 @@ test = [
   # "pypng",
   "matplotlib",
 ]
+ml = [
+  "anomalib",
+  "torch",
+  "torchvision",
+  "albumentations",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
