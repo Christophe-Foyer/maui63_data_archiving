@@ -14,7 +14,12 @@ def get_concat_dataset(folder):
     return ConcatDataset([
         VideoFrameDataset(
             file,
+
+            # TODO: Each video has a different scale / zoom so we probably want to adjust this so the tiles are about the size we want
+            # Less of an issue once we start using maui data maybe? Though different altitude flights might cause scale issues, maybe it shouldn't be sensitive to scale
             tile_size=1024,
+
+            # Resize the tiles to a specific shape
             transform=A.Compose(
                 [
                     A.Resize(
