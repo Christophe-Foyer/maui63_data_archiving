@@ -1,22 +1,37 @@
 from torch.utils.data import Dataset, DataLoader
 from maui63_data_archiving.image_source.video import VideoSource
-from pytorch_lightning import LightningDataModule
+from maui63_data_archiving.image_source.folder import FolderSource
+from lightning.pytorch import LightningDataModule
+from anomalib.data.datamodules.base.image import AnomalibDataModule
+from anomalib.data.datasets.base.image import AnomalibDataset
 import warnings
 import numpy as np
+from pathlib import Path
 
 
 # TODO: There's no reason why this can only handle video sources, could also handle folder sources
-class VideoFrameDataset(Dataset):
-    # TODO: Support tiling (wip)
+import numpy as np
+from torch.utils.data import Dataset
+from pathlib import Path
 
-    def __init__(self, video_path, tile_size: int=None, transform=None):
-        # Assumes square tiles?
+# TODO: Integrate a labeling pipeline where we can include masks
+# Should also default to an empty mask so we don't have to label most images, just those with "anomalies"
+class FrameDataset(Dataset):
+    def __init__(self, data_path, tile_size: int=None, transform=None):
+        source = Path(data_path)
+        if source.is_dir():
+            self.source = FolderSource(source, pattern="*")
+        elif source.is_file():
+            # TODO: Preloading/caching frames would probably help a lot on the video data
+            self.source = VideoSource(source)
+        else:
+            raise FileExistsError(source)
 
-        self.source = VideoSource(video_path)
         self.framecount = len(self.source)
         self.transform = transform
 
-        # Assumes the image shape doesn't change (can it even do that?) 
+        # Assumes the image shape doesn't change in the source (could be an issue with folders?)
+        # TODO: Move this to a subfunction so we can call it on each getitem (probably with caching)
         im = self.source.get_image(0)
         self.img_h, self.img_w = im.shape[:2]
 
@@ -25,9 +40,14 @@ class VideoFrameDataset(Dataset):
             self.tiles_x = int(np.ceil(self.img_w / tile_size))
             self.tiles_y = int(np.ceil(self.img_h / tile_size))
             self.tiles_per_frame = self.tiles_x * self.tiles_y
+
+            # Compute overlap strides
+            self.stride_x = (self.img_w - tile_size) / max(self.tiles_x - 1, 1)
+            self.stride_y = (self.img_h - tile_size) / max(self.tiles_y - 1, 1)
         else:
             self.tiles_x = self.tiles_y = 1
             self.tiles_per_frame = 1
+            self.stride_x = self.stride_y = 0
 
     def __len__(self):
         return self.framecount * self.tiles_per_frame
@@ -39,46 +59,25 @@ class VideoFrameDataset(Dataset):
         tile_y_idx = tile_idx // self.tiles_x
         tile_x_idx = tile_idx % self.tiles_x
 
-        frame = self.source.get_image(frame_idx)  # numpy array
+        frame = self.source.get_image(frame_idx)
 
         if self.tile_size:
-            y0 = tile_y_idx * self.tile_size
-            x0 = tile_x_idx * self.tile_size
-            y1 = min(y0 + self.tile_size, self.img_h)
-            x1 = min(x0 + self.tile_size, self.img_w)
-            frame = frame[y0:y1, x0:x1, :]  # crop region
+            x0 = int(tile_x_idx * self.stride_x)
+            y0 = int(tile_y_idx * self.stride_y)
+            x1 = x0 + self.tile_size
+            y1 = y0 + self.tile_size
 
-        # TODO: Should labels not always be 0? How do I build my test dataset? CVAT Instance?
-        out = {"image": frame, "label": 0}  # label=0 for "good"
+            # Clip just in case of floating-point rounding
+            x0, y0 = max(0, x0), max(0, y0)
+            x1, y1 = min(self.img_w, x1), min(self.img_h, y1)
+
+            tile = frame[y0:y1, x0:x1, :]
+        else:
+            tile = frame
+
+        out = {"image": tile, "label": 0}
 
         if self.transform:
             out = self.transform(**out)
 
-        # Should the image be transposed?
-        # frame = frame.transpose(2, 0, 1)
-
-        # Normalize?
-        #frame = frame.float() / 255.0
-
         return out
-
-
-class VideoDataModule(LightningDataModule):
-    def __init__(self, train_dataset, test_dataset=None, batch_size=8):
-        # TODO: Support transforms
-
-        super().__init__()
-        self.train_dataset = train_dataset
-        if test_dataset is None:
-            warnings.warn("No test dataset provided, using the train dataset as test...")
-            # TODO: Should this behavior even exist, for debugging for now
-            self.test_dataset = self.train_dataset
-        else:
-            self.test_dataset = test_dataset
-        self.batch_size = batch_size
-
-    def train_dataloader(self):
-        return DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=True)
-
-    def test_dataloader(self):
-        return DataLoader(self.test_dataset, batch_size=self.batch_size)
