@@ -17,7 +17,7 @@ from pathlib import Path
 # TODO: Integrate a labeling pipeline where we can include masks
 # Should also default to an empty mask so we don't have to label most images, just those with "anomalies"
 class FrameDataset(Dataset):
-    def __init__(self, data_path, tile_size: int=None, transform=None):
+    def __init__(self, data_path, tile_size: int=None, transform=None, labels=None):
         source = Path(data_path)
         if source.is_dir():
             self.source = FolderSource(source, pattern="*")
@@ -29,6 +29,8 @@ class FrameDataset(Dataset):
 
         self.framecount = len(self.source)
         self.transform = transform
+
+        self.labels = labels
 
         # Assumes the image shape doesn't change in the source (could be an issue with folders?)
         # TODO: Move this to a subfunction so we can call it on each getitem (probably with caching)
@@ -75,7 +77,10 @@ class FrameDataset(Dataset):
         else:
             tile = frame
 
-        out = {"image": tile, "label": 0}
+        # TODO: This is problematic for the cut up images, need actual labels from CVAT/Seaspotter or similar
+        # If labels is an iterable use the index, if it's an int use that, if it's none return 0
+        label = self.labels[idx] if isinstance(self.labels, (list, tuple)) else self.labels or 0
+        out = {"image": tile, "label": label}
 
         if self.transform:
             out = self.transform(**out)

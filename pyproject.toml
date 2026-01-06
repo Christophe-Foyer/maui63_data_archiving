@@ -83,6 +83,8 @@ ml = [
   "torch",
   "torchvision",
   "albumentations",
+  "transformers",
+  "scikit-learn",
 ]
 
 [tool.setuptools.packages.find]

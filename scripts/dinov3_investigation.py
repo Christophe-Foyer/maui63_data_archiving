@@ -8,7 +8,6 @@ from PIL import Image
 
 from maui63_data_archiving.dataset import FrameDataset
 
-
 # %%
 
 def compute_embeddings(dataset, model_name="facebook/dinov3-vits16-pretrain-lvd1689m", batch_size=32, device=None):
