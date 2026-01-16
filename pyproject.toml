@@ -70,6 +70,7 @@ dependencies = [
   "pillow-jxl-plugin",
   "scikit-image",
   "tqdm",
+  "pycocotools",
 ]
 
 [project.optional-dependencies]

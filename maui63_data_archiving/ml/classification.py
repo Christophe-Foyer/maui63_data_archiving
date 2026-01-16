@@ -14,7 +14,7 @@ class FewShotClassifier:
 
         for batch in tqdm(loader, desc="Extracting DINOv3 embeddings"):
             images = [Image.fromarray(im_batch.numpy()) for im_batch in batch["image"]]
-            inputs = processor(images=images, return_tensors="pt").to(device)
+            inputs = processor(images=images, return_tensors="pt").to(self.device)
             with torch.no_grad():
                 outputs = model(**inputs)
 
@@ -30,6 +30,7 @@ class FewShotClassifier:
         if use_reference_mean:
             # compute cosine similarity between dataset and mean of reference embeddings
             mean_ref_embeds = reference_embeds.mean(dim=0)
+            mean_ref_embeds = mean_ref_embeds / mean_ref_embeds.norm(dim=-1) # Re-normalize mean vector
             sims = dataset_embeds.matmul(mean_ref_embeds)
             max_sim = sims
         else:
@@ -48,3 +49,25 @@ class FewShotClassifier:
     def train_classifier(self, dataset):
         # Assumes the dataset label key contains an actual class value
         pass
+
+
+class DinoV3Classifier(torch.nn.Module):
+    def __init__(self, model_name="facebook/dinov3-vits16-pretrain-lvd1689m", batch_size=32, device=None):
+        super().__init__()
+        self.model_name = model_name
+        self.batch_size = batch_size
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = AutoModel.from_pretrained(self.model_name).to(self.device)
+        self.processor = AutoProcessor.from_pretrained(self.model_name)
+
+        # MLP Head for classification
+        hidden_dim = self.model.config.hidden_size
+        self.head = torch.nn.Sequential(
+            torch.nn.Linear(hidden_dim, 512),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(0.1),
+            torch.nn.Linear(512, 1)
+        )
+
+    def forward(self, x):
+        return self.head(self.model(x))
