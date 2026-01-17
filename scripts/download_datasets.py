@@ -283,19 +283,19 @@ def main():
     print("\n--- 2. Downloading Roboflow Datasets ---")
     
     # Configuration for Roboflow projects
-    roboflow_projects = [
-        {
-            "workspace": "elec440",
-            "project": "aerial-shark-images",
-            "version": 1,
-            "output_dir_name": "roboflow_aerial_sharks"
-        },
-        {
-            "workspace": "computer-vision-xnbbv",
-            "project": "pilot_whale_detection_gma",
-            "version": 1,
-            "output_dir_name": "pilot_whale_detection_gma"
-        }
+    roboflow_projects = [{
+            "workspace": path.split("/")[0],
+            "project": path.split("/")[1],
+            "version": 1, # TODO: Any datasets have more than 1 version?
+            "output_dir_name": path.split("/")[1]
+        } for path in [
+            "elec440/aerial-shark-images",
+            "computer-vision-xnbbv/pilot_whale_detection_gma",
+            "thesis-urxei/marlin",
+            "xupeng/ocean_val",
+            "wavec-offshore-renewables/dolphin-detection-qn12h",
+            "cetaceans/project1-w5dg4",
+        ]
     ]
 
     api_key = os.environ.get("ROBOFLOW_API_KEY")
