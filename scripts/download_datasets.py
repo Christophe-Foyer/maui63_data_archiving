@@ -295,6 +295,7 @@ def main():
             "xupeng/ocean_val",
             "wavec-offshore-renewables/dolphin-detection-qn12h",
             "cetaceans/project1-w5dg4",
+            "labgym-2f8fe/white-beaked-dolphins",
         ]
     ]
 
