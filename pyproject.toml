@@ -71,6 +71,7 @@ dependencies = [
   "scikit-image",
   "tqdm",
   "pycocotools",
+  "roboflow",
 ]
 
 [project.optional-dependencies]
