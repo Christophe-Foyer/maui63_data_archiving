@@ -99,6 +99,7 @@ class CocoDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.transforms = A.Compose(
             [
+                A.PadIfNeeded(min_height=512, min_width=512),
                 A.RandomCrop(width=512, height=512),
                 A.HorizontalFlip(p=0.5),
                 A.RandomRotate90(p=0.5),
