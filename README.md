@@ -8,26 +8,58 @@ A basic repository for data archiving scripts and APIs for Maui63.
 
 ## Installation
 
-Clone the repository and install in your python environment using `pip install .`
+This project uses `uv` for dependency management.
+
+1.  **Install `uv`** (if not already installed):
+    ```bash
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    ```
+
+2.  **Sync Dependencies**:
+    ```bash
+    uv sync --all-extras
+    ```
+    This will create a virtual environment in `.venv` with all necessary dependencies, including ML libraries.
 
 ### System Dependencies
 
-The library relies on ffmepg and libjxl tools: `sudo apt install ffmpeg libjxl-tools`
+The library relies on `ffmpeg` and `libjxl-tools`:
+```bash
+sudo apt install ffmpeg libjxl-tools
+```
 
 ## Usage
 
-```
+## Usage
+
+### Basic Conversion
+Run scripts using `uv run` to ensure dependencies from the environment are used.
+
+```python
 from maui63_data_archiving.converter import convert_images
 
 input_dir = "path/to/images/"
 
 # Convert to H265
-convert_images(input_dir,"output.mkv", converter_type="h265", preset="veryslow")
+convert_images(input_dir, "output.mkv", converter_type="h265", preset="veryslow")
 
 # Convert to JXL
-convert_images(input_dir,"jxl_output_dir", converter_type="jxl", quality=100)
-
+convert_images(input_dir, "jxl_output_dir", converter_type="jxl", quality=100)
 ```
+
+### Machine Learning
+Train the classifier using the provided script:
+
+```bash
+uv run python maui63_data_archiving/ml/train.py
+```
+
+This script expects data in `data/external` by default.
+
+### Data
+The project uses COCO-formatted datasets.
+To download sample training data, you can refer to the links below or use your own dataset structure:
+`data/external/{dataset_name}/{train,valid,test}/_annotations.coco.json`
 
 ## TODOs
 
