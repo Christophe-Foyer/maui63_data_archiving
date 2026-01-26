@@ -72,7 +72,7 @@ dependencies = [
   "tqdm",
   "pycocotools",
   "roboflow",
-  "albumentations",
+  "albumentationsx",
 ]
 
 [project.optional-dependencies]
@@ -88,6 +88,10 @@ ml = [
   "albumentations",
   "transformers",
   "scikit-learn",
+  "lightning",
+  "mlflow",
+  "grad-cam",
+  "torchmetrics",
 ]
 
 [tool.setuptools.packages.find]
