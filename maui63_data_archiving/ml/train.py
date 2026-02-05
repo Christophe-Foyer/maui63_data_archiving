@@ -1,14 +1,20 @@
 import os
-import torch
-import numpy as np
-import cv2
 import random
+import time
+from datetime import datetime
+
 import albumentations as A
-from albumentations.core.transforms_interface import DualTransform
-import torchmetrics
+import cv2
 import lightning.pytorch as pl
-from torch.utils.data import DataLoader, ConcatDataset
+import numpy as np
+import torch
+import torchmetrics
+import torchvision
+from albumentations.core.transforms_interface import DualTransform
+from torch.utils.data import ConcatDataset, DataLoader
 from transformers import AutoModel, AutoProcessor
+
+from maui63_data_archiving.dataset import FrameDataset
 from maui63_data_archiving.ml.dataset import CocoDataset
 
 
@@ -40,6 +46,112 @@ class AddSyntheticBlob(DualTransform):
         return cv2.circle(mask.copy(), center, r, 1, -1)
 
 
+class LogFlaggedImagesCallback(pl.Callback):
+    def __init__(self, data_path, num_images=16, tile_size=224, threshold=0.5):
+        super().__init__()
+        self.data_path = data_path
+        self.num_images = num_images
+        self.tile_size = tile_size
+        self.threshold = threshold
+        self.dataset = None
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        # Don't run this during the initial validation sanity check
+        # if trainer.sanity_checking:
+        #     return
+        if not os.path.exists(self.data_path):
+            return
+
+        if self.dataset is None:
+            self.dataset = FrameDataset(self.data_path, tile_size=self.tile_size)
+
+        # Shuffle indices to grab random tiles/frames
+        indices = list(range(len(self.dataset)))
+        random.shuffle(indices)
+
+        # We only search through a limited number of images to find flagged ones to avoid long stalls
+        search_limit = 200
+        flagged_images = []
+
+        # Use tqdm to show progress during the search
+        from tqdm import tqdm
+
+        pbar = tqdm(
+            total=min(len(indices), search_limit),
+            desc="Searching flagged images",
+            leave=False,
+        )
+
+        # Use a DataLoader with multiple workers to speed up image fetching
+        from torch.utils.data import DataLoader, Subset
+
+        search_subset = Subset(self.dataset, indices[:search_limit])
+        # Using batch_size for faster inference and num_workers for faster loading
+        loader = DataLoader(search_subset, batch_size=8, num_workers=8, pin_memory=True)
+
+        pl_module.eval()
+        with torch.no_grad():
+            for batch in loader:
+                images_batch = batch["image"]  # (B, H, W, C)
+                # Convert to list of numpy for processor
+                imgs_list = [img.numpy() for img in images_batch]
+
+                # Batch transform for model
+                inputs = pl_module.processor(images=imgs_list, return_tensors="pt")
+                inputs = {k: v.to(pl_module.device) for k, v in inputs.items()}
+
+                logits = pl_module(inputs)
+                probs = torch.sigmoid(logits).squeeze(-1)  # (B,)
+
+                for j in range(len(probs)):
+                    if probs[j] > self.threshold:
+                        # Convert to tensor (C, H, W) and normalize to [0, 1]
+                        img_tensor = images_batch[j].permute(2, 0, 1).float() / 255.0
+                        flagged_images.append(img_tensor)
+                        pbar.set_postfix(flagged=len(flagged_images))
+
+                    if len(flagged_images) >= self.num_images:
+                        break
+
+                pbar.update(len(images_batch))
+                if len(flagged_images) >= self.num_images:
+                    break
+        pbar.close()
+
+        if flagged_images:
+            grid = torchvision.utils.make_grid(
+                flagged_images, nrow=int(np.sqrt(self.num_images))
+            )
+            grid_np = grid.permute(1, 2, 0).cpu().numpy()
+
+            if trainer.logger:
+                try:
+                    # Try the standard Lightning logger interface first
+                    if hasattr(trainer.logger, "log_image"):
+                        trainer.logger.log_image(
+                            key="flagged_detections",
+                            image=grid_np,
+                            step=trainer.global_step,
+                        )
+                    elif hasattr(trainer.logger, "experiment") and hasattr(
+                        trainer.logger.experiment, "log_image"
+                    ):
+                        # Fallback for MLFlowLogger's underlying client
+                        trainer.logger.experiment.log_image(
+                            run_id=trainer.logger.run_id,
+                            image=grid_np,
+                            artifact_file=f"flagged_detections/step_{trainer.global_step}.png",
+                        )
+                    else:
+                        print("Warning: Logger does not support log_image.")
+
+                    print(
+                        f"Logged {len(flagged_images)} flagged images to MLflow at step {trainer.global_step}."
+                    )
+                except Exception as e:
+                    print(f"Failed to log image to MLflow: {e}")
+
+
 class DinoV3LightningModule(pl.LightningModule):
     def __init__(
         self,
@@ -47,16 +159,30 @@ class DinoV3LightningModule(pl.LightningModule):
         lr=1e-4,
         pos_weight=1.0,
         unfreeze_last_layer=False,
+        verbose=True,
     ):
         super().__init__()
+
+        start_init = time.time()
         self.save_hyperparameters()
         self.model_name = model_name
         self.lr = lr
         self.unfreeze_last_layer = unfreeze_last_layer
+        self.verbose = verbose
+
+        if self.verbose:
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] Loading backbone: {model_name}..."
+            )
 
         # Load Model
         self.model = AutoModel.from_pretrained(model_name)
         self.processor = AutoProcessor.from_pretrained(model_name)
+
+        if self.verbose:
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] Backbone loaded in {time.time() - start_init:.2f}s"
+            )
 
         # Handle freezing/unfreezing
         if unfreeze_last_layer:
@@ -179,7 +305,22 @@ class DinoV3LightningModule(pl.LightningModule):
     def configure_optimizers(self):
         # Only pass trainable parameters
         params = filter(lambda p: p.requires_grad, self.parameters())
-        return torch.optim.AdamW(params, lr=self.lr)
+        optimizer = torch.optim.AdamW(params, lr=self.lr, weight_decay=0.05)
+
+        # Use Cosine Annealing to smoothly decay the learning rate
+        # We use the max_epochs from the trainer if available
+        max_epochs = self.trainer.max_epochs if self.trainer is not None else 50
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=max_epochs, eta_min=1e-6
+        )
+
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "epoch",
+            },
+        }
 
 
 class CocoDataModule(pl.LightningDataModule):
@@ -188,23 +329,48 @@ class CocoDataModule(pl.LightningDataModule):
         data_dir,
         batch_size=4,
         model_name="facebook/dinov3-vits16-pretrain-lvd1689m",
+        verbose=True,
     ):
         super().__init__()
         self.data_dir = data_dir
         self.batch_size = batch_size
+        self.verbose = verbose
+
+        if self.verbose:
+            print(f"Initializing CocoDataModule (processor: {model_name})...")
+
         self.processor = AutoProcessor.from_pretrained(model_name)
 
         self.train_transforms = A.Compose(
             [
-                AddSyntheticBlob(p=0.2),  # Fake "positive" blobs
+                # Crop/Pad FIRST to minimize work for all subsequent steps
                 A.PadIfNeeded(min_height=224, min_width=224),
                 A.RandomCrop(width=224, height=224),
+                AddSyntheticBlob(p=0.2),  # Now only draws on the small patch
                 A.HorizontalFlip(p=0.5),
+                A.VerticalFlip(p=0.5),
                 A.RandomRotate90(p=0.5),
-                A.ColorJitter(
-                    brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.5
+                A.ShiftScaleRotate(
+                    shift_limit=0.0625, scale_limit=0.1, rotate_limit=45, p=0.5
                 ),
-                A.GaussianBlur(p=0.3),
+                A.OneOf(
+                    [
+                        A.MotionBlur(p=0.2),
+                        A.GaussianBlur(p=0.2),
+                        A.MedianBlur(blur_limit=3, p=0.2),
+                    ],
+                    p=0.3,
+                ),
+                A.OneOf(
+                    [
+                        A.CLAHE(clip_limit=2),
+                        A.Sharpen(),
+                        A.RandomBrightnessContrast(),
+                    ],
+                    p=0.3,
+                ),
+                A.HueSaturationValue(p=0.3),
+                A.GaussNoise(p=0.2),
             ]
         )
         self.val_transforms = A.Compose(
@@ -215,23 +381,41 @@ class CocoDataModule(pl.LightningDataModule):
         )
 
     def setup(self, stage=None):
+        import time
+
+        start_setup = time.time()
+        if self.verbose:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Setting up datasets...")
+
         self.train_dataset = self._load_dataset_split("train")
         self.val_dataset = self._load_dataset_split("valid")
         self.test_dataset = self._load_dataset_split("test")
 
-        print(f"Train samples: {len(self.train_dataset) if self.train_dataset else 0}")
-        print(f"Valid samples: {len(self.val_dataset) if self.val_dataset else 0}")
-        print(f"Test samples: {len(self.test_dataset) if self.test_dataset else 0}")
+        if self.verbose:
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] Setup complete in {time.time() - start_setup:.2f}s"
+            )
+            print(
+                f"Train samples: {len(self.train_dataset) if self.train_dataset else 0}"
+            )
+            print(f"Valid samples: {len(self.val_dataset) if self.val_dataset else 0}")
+            print(f"Test samples: {len(self.test_dataset) if self.test_dataset else 0}")
 
     def _load_dataset_split(self, split_name):
         datasets = []
         if os.path.exists(self.data_dir):
-            for dataset_name in os.listdir(self.data_dir):
+            subdirs = os.listdir(self.data_dir)
+            for i, dataset_name in enumerate(subdirs):
                 split_dir = os.path.join(self.data_dir, dataset_name, split_name)
                 # Check for annotations file
                 if os.path.isdir(split_dir) and os.path.exists(
                     os.path.join(split_dir, "_annotations.coco.json")
                 ):
+                    if self.verbose:
+                        print(
+                            f"  [{split_name}] Loading {dataset_name} ({i + 1}/{len(subdirs)})...",
+                            end="\r",
+                        )
                     try:
                         # Select transforms based on split
                         transforms = (
@@ -267,7 +451,7 @@ class CocoDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             collate_fn=self.collate_fn,
-            num_workers=12,
+            num_workers=16,
         )
 
     def val_dataloader(self):
@@ -278,7 +462,7 @@ class CocoDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             collate_fn=self.collate_fn,
-            num_workers=12,
+            num_workers=16,
         )
 
     def test_dataloader(self):
@@ -289,7 +473,7 @@ class CocoDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             collate_fn=self.collate_fn,
-            num_workers=12,
+            num_workers=16,
         )
 
 
@@ -311,7 +495,7 @@ if __name__ == "__main__":
         unfreeze_last_layer=True,
     )
 
-    # 3. Trainer
+    # 3. Loggers
     # By default, Lightning logs to TensorBoard (save_dir="lightning_logs")
     # We make it explicit here so you can easily change it or swap to MLFlow
     # from lightning.pytorch.loggers import TensorBoardLogger
@@ -326,23 +510,41 @@ if __name__ == "__main__":
         tracking_uri="http://localhost:5000",
     )
 
+    # 4. Callbacks
+    from lightning.pytorch.callbacks import LearningRateMonitor, TQDMProgressBar
+
+    callbacks = [
+        LearningRateMonitor(logging_interval="step"),
+        # TQDMProgressBar(refresh_rate=1),
+    ]
+    maui_data_path = "data/maui63/maui63_images"
+    if os.path.exists(maui_data_path):
+        callbacks.append(
+            LogFlaggedImagesCallback(
+                data_path=maui_data_path, num_images=16, threshold=0.5
+            )
+        )
+        print(f"Added LogFlaggedImagesCallback using {maui_data_path}")
+
+    # 5. Trainer
     trainer = pl.Trainer(
-        max_epochs=10,
+        max_epochs=50,
         accelerator="auto",
         devices=1,
         log_every_n_steps=5,
-        val_check_interval=1/2,  # twice per epoch
+        val_check_interval=1 / 2,  # 2 times per epoch
         logger=logger,
+        callbacks=callbacks,
     )
 
-    # 4. Fit
-    print("Running initial validation check...")
-    trainer.validate(model, datamodule=dm)
-
+    # 6. Fit
     print("Starting training...")
     trainer.fit(model, datamodule=dm)
 
-    # 5. Save Model State (Optional, for compatibility with inference scripts)
-    save_path = os.path.join(_script_dir, "dinov3_classifier_pl.pth")
+    # 7. Save Model State (Optional, for compatibility with inference scripts)
+    save_path = os.path.join(
+        _script_dir,
+        f"dinov3_classifier_pl_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth",
+    )
     torch.save(model.state_dict(), save_path)
     print(f"Model saved to {save_path}")
