@@ -84,6 +84,9 @@ services:
       MLFLOW_HOST: ${MLFLOW_HOST}
       MLFLOW_PORT: ${MLFLOW_PORT}
 
+      # Allow all hosts so the reverse proxy stops complaining
+      MLFLOW_SERVER_ALLOWED_HOSTS: "*"
+
     restart: unless-stopped
 
     command:
@@ -91,6 +94,7 @@ services:
       - -c
       - |
         pip install --no-cache-dir psycopg2-binary boto3
+        mlflow db upgrade "${MLFLOW_BACKEND_STORE_URI}"
         mlflow server \
           --backend-store-uri "${MLFLOW_BACKEND_STORE_URI}" \
           --artifacts-destination "${MLFLOW_ARTIFACTS_DESTINATION}" \

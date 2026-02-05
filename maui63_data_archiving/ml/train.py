@@ -330,8 +330,8 @@ if __name__ == "__main__":
         max_epochs=10,
         accelerator="auto",
         devices=1,
-        # log_every_n_steps=5,
-        val_check_interval=0.25,  # Run validation 4 times per epoch
+        log_every_n_steps=5,
+        val_check_interval=1/2,  # twice per epoch
         logger=logger,
     )
 
