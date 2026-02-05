@@ -7,26 +7,68 @@ from PIL import Image
 import torch
 import skimage.draw
 
+import time
+from functools import wraps
+from pycocotools import mask as coco_mask
 
+
+def timer(threshold=0.1):
+    """Only log if function takes longer than threshold seconds"""
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            start = time.time()
+            result = func(*args, **kwargs)
+            elapsed = time.time() - start
+
+            if elapsed > threshold:
+                if args and hasattr(args[0].__class__, "__name__"):
+                    class_name = args[0].__class__.__name__
+                    print(f"SLOW: {class_name}.{func.__name__} took {elapsed:.3f}s")
+                else:
+                    print(f"SLOW: {func.__name__} took {elapsed:.3f}s")
+
+            return result
+
+        return wrapper
+
+    return decorator
+
+
+# @timer(threshold=0.5)
+# def ann_to_mask(segmentation, h, w):
+#     mask = np.zeros((h, w), dtype=np.uint8)
+
+#     # COCO segmentation is a list of polygons [[x1, y1, x2, y2...], ...]
+#     # Your data seems to have it wrapped in a numpy array, handling both:
+#     if isinstance(segmentation, np.ndarray):
+#         segmentation = segmentation.tolist()
+
+#     for poly in segmentation:
+#         # Reshape to (N, 2)
+#         poly_coords = np.array(poly).reshape(-1, 2)
+
+#         # Get pixel coordinates inside the polygon
+#         rr, cc = skimage.draw.polygon(
+#             poly_coords[:, 1], poly_coords[:, 0], shape=(h, w)
+#         )
+#         mask[rr, cc] = 1
+
+#     return mask
+
+
+@timer(threshold=3)
 def ann_to_mask(segmentation, h, w):
-    mask = np.zeros((h, w), dtype=np.uint8)
+    # pycocotools has optimized C code for this
+    rle = coco_mask.frPyObjects(segmentation, h, w)
+    mask = coco_mask.decode(rle)
 
-    # COCO segmentation is a list of polygons [[x1, y1, x2, y2...], ...]
-    # Your data seems to have it wrapped in a numpy array, handling both:
-    if isinstance(segmentation, np.ndarray):
-        segmentation = segmentation.tolist()
+    # If multiple polygons, merge them
+    if len(mask.shape) == 3:
+        mask = mask.max(axis=2)
 
-    for poly in segmentation:
-        # Reshape to (N, 2)
-        poly_coords = np.array(poly).reshape(-1, 2)
-
-        # Get pixel coordinates inside the polygon
-        rr, cc = skimage.draw.polygon(
-            poly_coords[:, 1], poly_coords[:, 0], shape=(h, w)
-        )
-        mask[rr, cc] = 1
-
-    return mask
+    return mask.astype(np.uint8)
 
 
 # %%
@@ -37,16 +79,33 @@ import albumentations as A
 
 class CocoDataset(torch.utils.data.Dataset):
     def __init__(
-        self, dataset_dir, annotations_file="_annotations.coco.json", transforms=None
+        self,
+        dataset_dir,
+        annotations_file="_annotations.coco.json",
+        transforms=None,
+        cache_masks=True,
+        max_cache_size=0.25,  # So we don't fill up memory too much, store slowest masks (0-1 for percentage)
     ):
         self.dataset_dir = dataset_dir
         self.coco = COCO(os.path.join(dataset_dir, annotations_file))
         self.ids = list(self.coco.imgs.keys())
         self.transforms = transforms
 
+        self.cache_masks = cache_masks
+
+        # Convert float to int based on dataset size
+        if max_cache_size <= 1:
+            self.max_cache_size = int(max_cache_size * len(self.ids))
+        else:
+            self.max_cache_size = max_cache_size
+
+        self._mask_cache = {} if cache_masks else None
+        self._mask_creation_times = {} if cache_masks else None
+
     def __len__(self):
         return len(self.ids)
 
+    @timer(threshold=10)
     def __getitem__(self, idx):
         # Image info
         image_id = self.ids[idx]
@@ -59,13 +118,37 @@ class CocoDataset(torch.utils.data.Dataset):
         ann_ids = self.coco.getAnnIds(imgIds=image_id)
         annotations = self.coco.loadAnns(ann_ids)
 
-        # Create instance mask
+        # Get or create mask
         h, w = image.shape[:2]
-        instance_mask = np.zeros((h, w), dtype=np.int32)
+        if self.cache_masks:
+            if idx in self._mask_cache:
+                instance_mask = self._mask_cache[idx]
+            else:
+                # Time the mask creation
+                start = time.perf_counter()
+                instance_mask = self._create_mask(image_id, h, w)
+                elapsed = time.perf_counter() - start
 
-        for ann in annotations:
-            binary_mask = ann_to_mask(ann["segmentation"], h, w)
-            instance_mask[binary_mask > 0] = ann["id"]
+                # Add to cache
+                if len(self._mask_cache) < self.max_cache_size:
+                    # Cache not full, just add
+                    self._mask_cache[idx] = instance_mask
+                    self._mask_creation_times[idx] = elapsed
+                else:
+                    # Cache full, find fastest item
+                    # TODO: Store ordered to reduce compute?
+                    min_idx = min(
+                        self._mask_creation_times, key=self._mask_creation_times.get
+                    )
+
+                    # Only replace if new mask took longer
+                    if elapsed > self._mask_creation_times[min_idx]:
+                        del self._mask_cache[min_idx]
+                        del self._mask_creation_times[min_idx]
+                        self._mask_cache[idx] = instance_mask
+                        self._mask_creation_times[idx] = elapsed
+        else:
+            instance_mask = self._create_mask(image_id, h, w)
 
         result = {"image": image, "id": image_info["id"], "masks": instance_mask}
 
@@ -73,6 +156,17 @@ class CocoDataset(torch.utils.data.Dataset):
             result = self._apply_transforms(result, annotations)
 
         return result
+
+    def _create_mask(self, image_id, h, w):
+        ann_ids = self.coco.getAnnIds(imgIds=image_id)
+        annotations = self.coco.loadAnns(ann_ids)
+
+        instance_mask = np.zeros((h, w), dtype=np.int32)
+        for ann in annotations:
+            binary_mask = ann_to_mask(ann["segmentation"], h, w)
+            instance_mask[binary_mask > 0] = ann["id"]
+
+        return instance_mask
 
     def _apply_transforms(self, result, annotations):
         image = result["image"]

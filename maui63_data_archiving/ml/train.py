@@ -121,6 +121,8 @@ class DinoV3LightningModule(pl.LightningModule):
 
         # Use global pooled representation or mean of patches
         features = outputs.last_hidden_state[:, 1:, :].mean(dim=1)
+
+        # TODO: Apply sigmoid (only if not training since BCELoss includes it)
         return self.head(features)
 
     def training_step(self, batch, batch_idx):
@@ -161,6 +163,7 @@ class DinoV3LightningModule(pl.LightningModule):
         self.f1.reset()
 
     def test_step(self, batch, batch_idx):
+        # TODO: Make this also compute only for epochs and only update on step?
         inputs, labels = batch
         logits = self(inputs)
         loss = self.criterion(logits, labels)
@@ -253,6 +256,7 @@ class CocoDataModule(pl.LightningDataModule):
         labels = [1.0 if np.max(item["masks"]) > 0 else 0.0 for item in batch]
 
         inputs = self.processor(images=images, return_tensors="pt")
+
         return inputs, torch.tensor(labels).unsqueeze(1)
 
     def train_dataloader(self):
@@ -263,7 +267,7 @@ class CocoDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             collate_fn=self.collate_fn,
-            num_workers=4,
+            num_workers=12,
         )
 
     def val_dataloader(self):
@@ -274,7 +278,7 @@ class CocoDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             collate_fn=self.collate_fn,
-            num_workers=4,
+            num_workers=12,
         )
 
     def test_dataloader(self):
@@ -285,7 +289,7 @@ class CocoDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             collate_fn=self.collate_fn,
-            num_workers=4,
+            num_workers=12,
         )
 
 
@@ -326,9 +330,9 @@ if __name__ == "__main__":
         max_epochs=10,
         accelerator="auto",
         devices=1,
-        log_every_n_steps=5,
+        # log_every_n_steps=5,
         val_check_interval=0.25,  # Run validation 4 times per epoch
-        logger=False,
+        logger=logger,
     )
 
     # 4. Fit

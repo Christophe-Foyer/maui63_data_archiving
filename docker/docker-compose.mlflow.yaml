@@ -1,4 +1,6 @@
 # TODO: Should these be more persistent than this?
+name: maui63_mlflow
+
 volumes:
   pgdata:
   minio-data:
