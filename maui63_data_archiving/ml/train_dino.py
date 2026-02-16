@@ -140,7 +140,7 @@ class LogFlaggedImagesCallback(pl.Callback):
                         trainer.logger.experiment.log_image(
                             run_id=trainer.logger.run_id,
                             image=grid_np,
-                            artifact_file=f"flagged_detections/step_{trainer.global_step}.png",
+                            artifact_file=f"flagged_detections/step_{trainer.global_step:010}.png",
                         )
                     else:
                         print("Warning: Logger does not support log_image.")
@@ -330,6 +330,7 @@ class CocoDataModule(pl.LightningDataModule):
         batch_size=4,
         model_name="facebook/dinov3-vits16-pretrain-lvd1689m",
         verbose=True,
+        tile_size=224,
     ):
         super().__init__()
         self.data_dir = data_dir
@@ -344,8 +345,8 @@ class CocoDataModule(pl.LightningDataModule):
         self.train_transforms = A.Compose(
             [
                 # Crop/Pad FIRST to minimize work for all subsequent steps
-                A.PadIfNeeded(min_height=224, min_width=224),
-                A.RandomCrop(width=224, height=224),
+                A.PadIfNeeded(min_height=tile_size, min_width=tile_size),
+                A.RandomCrop(width=tile_size, height=tile_size),
                 AddSyntheticBlob(p=0.2),  # Now only draws on the small patch
                 A.HorizontalFlip(p=0.5),
                 A.VerticalFlip(p=0.5),
@@ -375,8 +376,8 @@ class CocoDataModule(pl.LightningDataModule):
         )
         self.val_transforms = A.Compose(
             [
-                A.PadIfNeeded(min_height=224, min_width=224),
-                A.RandomCrop(width=224, height=224),
+                A.PadIfNeeded(min_height=tile_size, min_width=tile_size),
+                A.RandomCrop(width=tile_size, height=tile_size),
             ]
         )
 
@@ -483,14 +484,18 @@ if __name__ == "__main__":
     external_dir = os.path.join(_script_dir, "../../data/external")
 
     pl.seed_everything(42)
+    # model_name = "facebook/dinov3-vits16-pretrain-lvd1689m"
+    model_name = "facebook/dinov3-vitl16-pretrain-sat493m"
+    tile_size = 512
 
     # 1. Init DataModule
-    dm = CocoDataModule(data_dir=external_dir, batch_size=4)
+    dm = CocoDataModule(data_dir=external_dir, batch_size=4, model_name=model_name, tile_size=tile_size)
 
     # 2. Init Model
     # pos_weight=5.0 to penalize false negatives 5x more than false positives
     # This increases recall (catch more positives) at the cost of precision (more false alarms)
     model = DinoV3LightningModule(
+        model_name=model_name,
         pos_weight=5.0,
         unfreeze_last_layer=True,
     )
@@ -521,7 +526,7 @@ if __name__ == "__main__":
     if os.path.exists(maui_data_path):
         callbacks.append(
             LogFlaggedImagesCallback(
-                data_path=maui_data_path, num_images=16, threshold=0.5
+                data_path=maui_data_path, num_images=16, threshold=0.5, tile_size=tile_size
             )
         )
         print(f"Added LogFlaggedImagesCallback using {maui_data_path}")

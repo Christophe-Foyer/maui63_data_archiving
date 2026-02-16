@@ -5,11 +5,11 @@ import os
 import numpy as np
 from PIL import Image
 import torch
-import skimage.draw
-
 import time
 from functools import wraps
 from pycocotools import mask as coco_mask
+import json
+from pathlib import Path
 
 
 def timer(threshold=0.1):
@@ -150,7 +150,13 @@ class CocoDataset(torch.utils.data.Dataset):
         else:
             instance_mask = self._create_mask(image_id, h, w)
 
-        result = {"image": image, "id": image_info["id"], "masks": instance_mask}
+        result = {"image": image, "id": image_info["id"]}
+        if self.cache_masks:
+            result["masks"] = instance_mask
+
+        # Add basic detection info (will be overwritten by transforms if they exist)
+        result["bboxes"] = [ann["bbox"] for ann in annotations]
+        result["category_ids"] = [ann["category_id"] for ann in annotations]
 
         if self.transforms is not None:
             result = self._apply_transforms(result, annotations)
@@ -217,6 +223,103 @@ class CocoDataset(torch.utils.data.Dataset):
 
 
 # %%
+
+
+def merge_coco_datasets(dataset_dirs, output_dir):
+    """
+    Merges multiple COCO datasets into one.
+    Assumes each directory has a 'train', 'valid', and 'test' subdirectory.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for split in ["train", "valid", "test"]:
+        split_out_dir = output_dir / split
+        split_out_dir.mkdir(exist_ok=True)
+        images_out_dir = split_out_dir
+
+        merged_images = []
+        merged_annotations = []
+        merged_categories = []
+        cat_name_to_new_id = {}
+
+        image_id_offset = 0
+        ann_id_offset = 0
+
+        for ds_dir in dataset_dirs:
+            ds_dir = Path(ds_dir)
+            split_dir = ds_dir / split
+            ann_file = split_dir / "_annotations.coco.json"
+
+            if not ann_file.exists():
+                continue
+
+            with open(ann_file, "r") as f:
+                coco_data = json.load(f)
+
+            # 1. Normalize Categories
+            current_ds_cat_id_to_new_id = {}
+            for cat in coco_data.get("categories", []):
+                name = cat["name"]
+                if name not in cat_name_to_new_id:
+                    # Create new category in merged list
+                    new_id = len(merged_categories) + 1  # COCO usually uses 1-based IDs
+                    cat_name_to_new_id[name] = new_id
+                    new_cat = cat.copy()
+                    new_cat["id"] = new_id
+                    merged_categories.append(new_cat)
+
+                current_ds_cat_id_to_new_id[cat["id"]] = cat_name_to_new_id[name]
+
+            # 2. Images
+            img_id_map = {}
+            for img in coco_data.get("images", []):
+                old_id = img["id"]
+                new_id = old_id + image_id_offset
+                img_id_map[old_id] = new_id
+
+                # Copy or symlink image
+                src_path = split_dir / img["file_name"]
+                dst_name = f"{ds_dir.name}_{img['file_name']}"
+                dst_path = images_out_dir / dst_name
+
+                if src_path.exists():
+                    # Use unique name to avoid collisions
+                    img["file_name"] = dst_name
+                    img["id"] = new_id
+                    if not dst_path.exists():
+                        os.symlink(os.path.abspath(src_path), dst_path)
+                    merged_images.append(img)
+
+            # 3. Annotations
+            for ann in coco_data.get("annotations", []):
+                ann["id"] = ann["id"] + ann_id_offset
+                ann["image_id"] = img_id_map.get(ann["image_id"])
+                # Update category_id using the map
+                ann["category_id"] = current_ds_cat_id_to_new_id.get(
+                    ann["category_id"], ann["category_id"]
+                )
+                if ann["image_id"] is not None:
+                    merged_annotations.append(ann)
+
+            # Increment offsets (using max ids to be safe)
+            if coco_data.get("images"):
+                image_id_offset = max([img["id"] for img in merged_images]) + 1
+            if coco_data.get("annotations"):
+                ann_id_offset = max([ann["id"] for ann in merged_annotations]) + 1
+
+        if merged_images:
+            merged_coco = {
+                "images": merged_images,
+                "annotations": merged_annotations,
+                "categories": merged_categories,
+            }
+            with open(split_out_dir / "_annotations.coco.json", "w") as f:
+                json.dump(merged_coco, f)
+            print(
+                f"Split '{split}': Merged {len(merged_images)} images and {len(merged_annotations)} annotations."
+            )
+
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt

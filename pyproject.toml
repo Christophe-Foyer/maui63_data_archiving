@@ -91,6 +91,7 @@ ml = [
   "mlflow",
   "grad-cam",
   "torchmetrics",
+  "rfdetr",
 ]
 
 [tool.setuptools.packages.find]
