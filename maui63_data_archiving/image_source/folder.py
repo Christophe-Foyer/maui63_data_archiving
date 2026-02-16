@@ -1,17 +1,33 @@
 from pathlib import Path
 from typing import List, Union
+from functools import lru_cache
 
-import imageio.v3 as iio3
+import cv2
 import numpy as np
-import pillow_jxl
-
-_ = pillow_jxl  # So stuff doesn't complain, I'm sure there's an ignore flag in vscode somewhere though
-
-from PIL import ImageFile
+import pillow_jxl  # noqa # pylint: disable=unused-import
+from PIL import Image, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 from maui63_data_archiving.image_source.abstract import ImageSource
+
+
+def robust_read_image(path: str) -> np.ndarray:
+    """Read image with OpenCV, falling back to PIL for truncated/corrupted JPEGs."""
+    # Try OpenCV first (fast)
+    image = cv2.imread(path)
+    if image is not None:
+        return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+    # Fallback to PIL (tolerant)
+    try:
+        with Image.open(path) as img:
+            img = img.convert("RGB")
+            return np.array(img)
+    except Exception as e:
+        raise IOError(
+            f"Failed to load image even with PIL fallback: {path}. Error: {e}"
+        )
 
 
 class ImageListSource(ImageSource):
@@ -23,8 +39,10 @@ class ImageListSource(ImageSource):
     def __len__(self):
         return len(self.image_paths)
 
+    @lru_cache(maxsize=2)
     def get_image(self, idx) -> np.ndarray:
-        return iio3.imread(self.get_image_path(idx), plugin="pillow")
+        path = str(self.get_image_path(idx))
+        return robust_read_image(path)
 
     def get_image_path(self, idx) -> str:
         return self.image_paths[idx]
@@ -42,8 +60,10 @@ class FolderSource(ImageSource):
     def __len__(self):
         return len(self.image_paths)
 
+    @lru_cache(maxsize=2)
     def get_image(self, idx) -> np.ndarray:
-        return iio3.imread(self.get_image_path(idx), plugin="pillow")
+        path = str(self.get_image_path(idx))
+        return robust_read_image(path)
 
     def get_image_path(self, idx) -> str:
         return self.image_paths[idx]

@@ -4,14 +4,13 @@ import random
 import logging
 import shutil
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any
 
 import numpy as np
 import torch
 import torchvision
 import mlflow
 from tqdm import tqdm
-from PIL import Image
 import supervision as sv
 
 from rfdetr import RFDETRBase
@@ -186,43 +185,57 @@ class RFDETRMLFlowCallback:
         # Ensure model is in eval mode for visual assessment
         self.model_wrapper.model.model.eval()
 
+        # Use a DataLoader for faster parallel image fetching
+        from torch.utils.data import DataLoader, Subset
+
+        search_subset = Subset(self.dataset, indices[: self.search_limit])
+        loader = DataLoader(search_subset, batch_size=4, num_workers=8, pin_memory=True)
+
         pbar = tqdm(total=self.search_limit, desc=f"Epoch {epoch} search", leave=False)
-        for idx in indices[: self.search_limit]:
+
+        for batch in loader:
             try:
-                sample = self.dataset[idx]
-                image_np = sample["image"]  # H, W, C (RGB)
+                images_batch = batch["image"]  # (B, H, W, C) numpy
 
-                # RFDETR.predict returns sv.Detections
-                detections = self.model_wrapper.predict(
-                    image_np, threshold=self.threshold
-                )
+                for i in range(len(images_batch)):
+                    image_np = images_batch[i].numpy()
 
-                if isinstance(detections, list):
-                    detections = detections[0]
-
-                if len(detections.xyxy) > 0:
-                    # Annotate image
-                    annotated_img = box_annotator.annotate(
-                        scene=image_np.copy(), detections=detections
-                    )
-                    labels = [f"score: {conf:.2f}" for conf in detections.confidence]
-                    annotated_img = label_annotator.annotate(
-                        scene=annotated_img, detections=detections, labels=labels
+                    # RFDETR.predict returns sv.Detections
+                    detections = self.model_wrapper.predict(
+                        image_np, threshold=self.threshold
                     )
 
-                    img_tensor = (
-                        torch.from_numpy(annotated_img).permute(2, 0, 1).float() / 255.0
-                    )
-                    flagged_tiles.append(img_tensor)
-                    pbar.set_postfix(flagged=len(flagged_tiles))
+                    if isinstance(detections, list):
+                        detections = detections[0]
+
+                    if len(detections.xyxy) > 0:
+                        # Annotate image
+                        annotated_img = box_annotator.annotate(
+                            scene=image_np.copy(), detections=detections
+                        )
+                        labels = [
+                            f"score: {conf:.2f}" for conf in detections.confidence
+                        ]
+                        annotated_img = label_annotator.annotate(
+                            scene=annotated_img, detections=detections, labels=labels
+                        )
+
+                        img_tensor = (
+                            torch.from_numpy(annotated_img).permute(2, 0, 1).float()
+                            / 255.0
+                        )
+                        flagged_tiles.append(img_tensor)
+                        pbar.set_postfix(flagged=len(flagged_tiles))
+
+                    pbar.update(1)
+                    if len(flagged_tiles) >= self.num_flagged_to_log:
+                        break
 
                 if len(flagged_tiles) >= self.num_flagged_to_log:
                     break
             except Exception as e:
-                logger.warning(f"Error processing visual tile {idx}: {e}")
+                logger.warning(f"Error processing visual evaluation batch: {e}")
                 continue
-            finally:
-                pbar.update(1)
         pbar.close()
 
         if flagged_tiles:
@@ -318,7 +331,8 @@ def main():
                 epochs=100,
                 imgsz=560,  # RF-DETR-Base default resolution
                 batch=4,  # Base is larger than Small, reducing batch size to avoid OOM
-                grad_accum_steps=4,
+                grad_accum_steps=1,
+                num_workers=16,
                 project="maui63_det",
                 name="rf-detr-base_dolphins",
                 exist_ok=True,

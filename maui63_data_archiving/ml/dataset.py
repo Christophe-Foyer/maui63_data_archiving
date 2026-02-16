@@ -3,13 +3,14 @@
 from pycocotools.coco import COCO
 import os
 import numpy as np
-from PIL import Image
 import torch
 import time
 from functools import wraps
 from pycocotools import mask as coco_mask
 import json
 from pathlib import Path
+import cv2
+import heapq
 
 
 def timer(threshold=0.1):
@@ -100,7 +101,9 @@ class CocoDataset(torch.utils.data.Dataset):
             self.max_cache_size = max_cache_size
 
         self._mask_cache = {} if cache_masks else None
-        self._mask_creation_times = {} if cache_masks else None
+        # Min-heap to track the fastest items currently in our "Top Slowest" cache
+        # Stores (creation_time, idx)
+        self._mask_priority_heap = [] if cache_masks else None
 
     def __len__(self):
         return len(self.ids)
@@ -111,10 +114,14 @@ class CocoDataset(torch.utils.data.Dataset):
         image_id = self.ids[idx]
         image_info = self.coco.loadImgs(image_id)[0]
         image_path = os.path.join(self.dataset_dir, image_info["file_name"])
-        image = Image.open(image_path).convert("RGB")
-        image = np.array(image)
 
-        # Get annotations
+        # OpenCV is typically faster than PIL for decoding and NumPy conversion
+        image = cv2.imread(image_path)
+        if image is None:
+            raise FileNotFoundError(f"Failed to load image: {image_path}")
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        # Get annotations once
         ann_ids = self.coco.getAnnIds(imgIds=image_id)
         annotations = self.coco.loadAnns(ann_ids)
 
@@ -126,29 +133,26 @@ class CocoDataset(torch.utils.data.Dataset):
             else:
                 # Time the mask creation
                 start = time.perf_counter()
-                instance_mask = self._create_mask(image_id, h, w)
+                instance_mask = self._create_mask_optimized(annotations, h, w)
                 elapsed = time.perf_counter() - start
 
-                # Add to cache
+                # Add to cache using a Min-Heap to maintain the "Slowest K" items
+                # Overhead: O(log N) to insert/evict instead of O(N)
                 if len(self._mask_cache) < self.max_cache_size:
-                    # Cache not full, just add
                     self._mask_cache[idx] = instance_mask
-                    self._mask_creation_times[idx] = elapsed
+                    heapq.heappush(self._mask_priority_heap, (elapsed, idx))
                 else:
-                    # Cache full, find fastest item
-                    # TODO: Store ordered to reduce compute?
-                    min_idx = min(
-                        self._mask_creation_times, key=self._mask_creation_times.get
-                    )
+                    # Peek at the fastest mask currently in our cache
+                    fastest_in_cache_time, fastest_idx = self._mask_priority_heap[0]
 
-                    # Only replace if new mask took longer
-                    if elapsed > self._mask_creation_times[min_idx]:
-                        del self._mask_cache[min_idx]
-                        del self._mask_creation_times[min_idx]
+                    if elapsed > fastest_in_cache_time:
+                        # The new mask is slower than our fastest cached mask, swap them
+                        heapq.heapreplace(self._mask_priority_heap, (elapsed, idx))
+                        del self._mask_cache[fastest_idx]
                         self._mask_cache[idx] = instance_mask
-                        self._mask_creation_times[idx] = elapsed
+                    # else: new mask is faster than everything in cache, don't store it
         else:
-            instance_mask = self._create_mask(image_id, h, w)
+            instance_mask = self._create_mask_optimized(annotations, h, w)
 
         result = {"image": image, "id": image_info["id"]}
         if self.cache_masks:
@@ -163,16 +167,40 @@ class CocoDataset(torch.utils.data.Dataset):
 
         return result
 
-    def _create_mask(self, image_id, h, w):
-        ann_ids = self.coco.getAnnIds(imgIds=image_id)
-        annotations = self.coco.loadAnns(ann_ids)
-
+    def _create_mask_optimized(self, annotations, h, w):
+        """Batch processed mask creation using pycocotools C-optimizations."""
         instance_mask = np.zeros((h, w), dtype=np.int32)
-        for ann in annotations:
-            binary_mask = ann_to_mask(ann["segmentation"], h, w)
-            instance_mask[binary_mask > 0] = ann["id"]
+        if not annotations:
+            return instance_mask
+
+        # Filter out annotations without segmentation
+        segmentations = [
+            ann["segmentation"] for ann in annotations if "segmentation" in ann
+        ]
+        valid_anns = [ann for ann in annotations if "segmentation" in ann]
+
+        if not segmentations:
+            return instance_mask
+
+        # pycocotools can batch process segmentations
+        rles = coco_mask.frPyObjects(segmentations, h, w)
+        masks = coco_mask.decode(rles)  # Returns (h, w, n)
+
+        if len(masks.shape) == 3:
+            for i, ann in enumerate(valid_anns):
+                m = masks[:, :, i]
+                instance_mask[m > 0] = ann["id"]
+        else:
+            # Single annotation case
+            instance_mask[masks > 0] = valid_anns[0]["id"]
 
         return instance_mask
+
+    def _create_mask(self, image_id, h, w):
+        # Kept for backward compatibility but deprecated
+        ann_ids = self.coco.getAnnIds(imgIds=image_id)
+        annotations = self.coco.loadAnns(ann_ids)
+        return self._create_mask_optimized(annotations, h, w)
 
     def _apply_transforms(self, result, annotations):
         image = result["image"]
